@@ -6,3 +6,4 @@ export { purge } from './purge';
 export { registerStringUrlExtension, url } from './string-to-url';
 export { registerStringInterpolateExtension, interpolate } from './interpolate';
 export { debounce } from './debounce';
+export { clone } from './clone';
