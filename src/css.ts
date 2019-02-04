@@ -109,7 +109,7 @@ class Css {
 
   renderCss = () => {
     if (!(global as any).document) {
-      console.log(this.sheet);
+      // console.log(this.sheet);
 
       return this.sheet.cssRules.map((rule: any) => rule.cssText).join('\n');
     }
