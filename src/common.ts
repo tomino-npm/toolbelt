@@ -11,6 +11,6 @@ export interface Indexable<T> {
 }
 
 export interface Group<T> {
-  key: string;
+  key: string | number;
   values: T[];
 }
