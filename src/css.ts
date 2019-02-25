@@ -21,17 +21,32 @@ function hash(input: string) {
   return outputHash;
 }
 
+const nameMatch = /\/\*\s*name:\s*(\S+)\s*\*\//;
+
 class Css {
   sheet: any;
   prefix: string;
+  speed: boolean;
+  browser: boolean;
+  sheetNode: HTMLStyleElement;
+
+  generated: { [index: string]: boolean } = {};
 
   constructor(prefix: string) {
     this.prefix = prefix;
+    this.speed = process.env.NODE_ENV === 'production';
+    this.browser = typeof document !== 'undefined';
 
-    if ((global as any).document) {
-      const styleEl = document.createElement('style');
-      document.head.appendChild(styleEl);
-      this.sheet = styleEl.sheet;
+    // head = document.getElementsByTagName('head')[0];
+    // stylesheet = document.createElement('link');
+    // link.rel = 'stylesheet';
+    // link.href = 'data:text/css,' + escape(css);  // IE needs this escaped
+    // head.appendChild(link);
+
+    if (this.browser) {
+      this.sheetNode = document.createElement('style');
+      document.head.appendChild(this.sheetNode);
+      this.sheet = this.sheetNode.sheet;
     } else {
       this.sheet = {
         cssRules: [],
@@ -49,60 +64,63 @@ class Css {
     );
   }
 
+  insertRule(rule: string) {
+    if (this.browser && !this.speed) {
+      this.sheetNode.appendChild(document.createTextNode(rule));
+    } else {
+      this.sheet.insertRule(rule, this.sheet.cssRules.length);
+    }
+  }
+
+  cssProp = (strings: TemplateStringsArray, ...interpolations: any[]) => {
+    return { className: this.css(strings, interpolations) };
+  };
+
   css = (strings: TemplateStringsArray, ...interpolations: any[]) => {
-    const styleString = this.interleave(strings, interpolations);
+    let rule = this.interleave(strings, interpolations).trim();
 
-    let className: string;
-    let rule: string;
+    let className: string = '';
+    let h = hash(rule);
 
-    // console.log('style: ' + styleString);
+    if (this.generated[h]) {
+      // do not add the same name twice
+      return;
+    }
+    this.generated[h] = true;
 
-    // we can use pre-defined class names
-    if (styleString.trim().startsWith('.')) {
-      className = styleString
-        .trim()
-        .match(/[^\{]*/)[0]
-        .split(' ')[0]
-        .substring(1);
-      // console.log('Named ' + className);
+    // find the debug name: /* name:NAME */
+    let name = rule.match(nameMatch);
+    if (name) {
+      className = name[1] + '-';
+      rule = rule.replace(nameMatch, '').trim();
+    }
+    className = (this.prefix + className + h) as string;
 
-      let newClassName = className + '-' + hash(styleString);
+    // add index for loose ".a .b" subclasses
+    rule = rule.replace(/(^\s*)\./gm, '$1\n.' + className + ' .');
+    // add index for tight ".a.b" subclasses
+    rule = rule.replace(/(^\s*\&)/gm, '\n.' + className);
+    // add index for selectors ":hover"
+    rule = rule.replace(/(^\s*:)/gm, '\n.' + className + ':');
+    // add index for elements "td { color: blue }"
+    rule = rule.replace(/^ *([a-zA-Z\.0-9 ]+) *\{/gm, '\n.' + className + ' $1{'); /*?*/
 
-      // console.log('New ' + newClassName);
-      rule = styleString.replace(new RegExp(className, 'g'), newClassName);
-      className = newClassName;
+    rule = rule.trim(); /*?*/
 
-      // console.log(className);
-      // console.log(rule);
-    } else {
-      // console.log('Unnamed');
+    // if it has unnamed start so we add the classname to it
+    let match = /\.[a-zA-Z_]/.exec(rule);
+    let indexOfDot = match ? match.index : rule.length;
 
-      className = `${this.prefix.trim()}-${hash(styleString)}`;
-      rule = '';
+    if (indexOfDot > 0) {
+      rule = `.${className} {\n  ${rule.substring(0, indexOfDot).trim()}\n}\n${rule.substring(
+        indexOfDot
+      )}`;
     }
 
-    // split rules if more than one is expected
+    rule = rule.replace(/\s*(\W)\s*/gm, '$1');
+    rule = rule.replace(/\}(\.|@)/g, '}\n$1'); /*?*/
 
-    // console.log('processing rule: ' + rule);
-
-    if (rule.indexOf('}') >= 0) {
-      let splits = rule.split('}');
-      for (let split of splits) {
-        if (!split.trim()) {
-          continue;
-        }
-        const index = this.sheet.cssRules.length;
-        // console.log('inserting rule: ' + split + '}');
-        this.sheet.insertRule(split + '}', index);
-      }
-    } else {
-      // simple rules
-      const index = this.sheet.cssRules.length;
-      rule = `.${className} { ${styleString} }`;
-
-      // console.log('inserting rule: ' + rule);
-      this.sheet.insertRule(rule, index);
-    }
+    this.insertRule(rule);
 
     return className;
   };
@@ -122,5 +140,6 @@ export const initCss = (prefix: string) => {
   return engine;
 };
 
-export const engine = initCss('style');
+export const engine = initCss('style-');
 export const css = engine.css;
+export const cssProp = engine.cssProp;

@@ -1,5 +1,5 @@
 export { addResolvers } from './add-resolvers';
-export { css, engine, initCss } from './css';
+export { css, engine, initCss, cssProp } from './css';
 export { groupBy } from './group-by';
 export { groupByArray } from './group-by-array';
 export { purge } from './purge';
