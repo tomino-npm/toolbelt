@@ -1,10 +1,10 @@
 // print styles
 
 const chars = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k'];
-function hash(input: string) {
+function hash(input: string): string {
   var hash = 0;
   if (input.length == 0) {
-    return hash;
+    return hash.toString();
   }
   for (var i = 0; i < input.length; i++) {
     var char = input.charCodeAt(i);
@@ -23,6 +23,13 @@ function hash(input: string) {
 
 const nameMatch = /\/\*\s*name:\s*(\S+)\s*\*\//;
 
+type CssContext = {
+  name: string;
+  parent: CssContext;
+  text: string;
+  rules: string[];
+};
+
 class Css {
   sheet: any;
   prefix: string;
@@ -30,7 +37,7 @@ class Css {
   browser: boolean;
   sheetNode: HTMLStyleElement;
 
-  generated: { [index: string]: boolean } = {};
+  generated: { [index: string]: string } = {};
 
   constructor(prefix: string) {
     this.prefix = prefix;
@@ -76,6 +83,31 @@ class Css {
     return { className: this.css(strings, interpolations) };
   };
 
+  strip(a: string) {
+    return a.replace(/\s*(\W)\s*/gm, '$1');
+  }
+
+  stripRules(context: CssContext) {
+    return this.strip(context.rules.join(';') + ';');
+  }
+
+  addRule(media: { [media: string]: string[] }, context: CssContext) {
+    // find if there is media parent
+    let parent = context.parent;
+    let mediaName = '';
+    while (parent !== null) {
+      if (parent.name.startsWith('@')) {
+        mediaName = parent.name;
+        break;
+      }
+      parent = parent.parent;
+    }
+    if (media[mediaName] == null) {
+      media[mediaName] = [];
+    }
+    media[mediaName].push(`${context.name} {${this.stripRules(context)}}`);
+  }
+
   css = (strings: TemplateStringsArray, ...interpolations: any[]) => {
     let rule = this.interleave(strings, interpolations).trim();
 
@@ -84,9 +116,8 @@ class Css {
 
     if (this.generated[h]) {
       // do not add the same name twice
-      return;
+      return this.generated[h];
     }
-    this.generated[h] = true;
 
     // find the debug name: /* name:NAME */
     let name = rule.match(nameMatch);
@@ -94,35 +125,83 @@ class Css {
       className = name[1] + '-';
       rule = rule.replace(nameMatch, '').trim();
     }
-    className = (this.prefix + className + h) as string;
+    let result = this.prefix + className + h;
+    this.generated[h] = result;
+    className = '.' + result;
 
-    // add index for loose ".a .b" subclasses
-    rule = rule.replace(/(^\s*)\./gm, '$1\n.' + className + ' .');
-    // add index for tight ".a.b" subclasses
-    rule = rule.replace(/(^\s*\&)/gm, '\n.' + className);
-    // add index for selectors ":hover"
-    rule = rule.replace(/(^\s*:)/gm, '\n.' + className + ':');
-    // add index for elements "td { color: blue }"
-    rule = rule.replace(/^ *([a-zA-Z\.0-9 ]+) *\{/gm, '\n.' + className + ' $1{'); /*?*/
+    let context: CssContext = {
+      name: className,
+      parent: null,
+      text: '',
+      rules: []
+    };
 
-    rule = rule.trim(); /*?*/
+    // parse the input
+    let media: { [media: string]: string[] } = {};
 
-    // if it has unnamed start so we add the classname to it
-    let match = /\.[a-zA-Z_]/.exec(rule);
-    let indexOfDot = match ? match.index : rule.length;
+    for (let i = 0; i < rule.length; i++) {
+      let c = rule[i];
+      if (c === '{') {
+        let name = context.text.trim();
 
-    if (indexOfDot > 0) {
-      rule = `.${className} {\n  ${rule.substring(0, indexOfDot).trim()}\n}\n${rule.substring(
-        indexOfDot
-      )}`;
+        // flush existing rules
+        if (context.rules.length) {
+          this.addRule(media, context);
+          context.rules = [];
+        }
+
+        // name differs based on first letter
+        let parentName = context.name.startsWith('@') ? context.parent.name : context.name;
+        switch (name[0]) {
+          case '&':
+            name = parentName + name.substring(1).trim();
+            break;
+          case ':':
+            name = parentName + name;
+            break;
+          case '@':
+            name = name;
+            break;
+          default:
+            name = parentName + ' ' + name;
+            break;
+        }
+
+        context = {
+          parent: context,
+          name,
+          text: '',
+          rules: []
+        };
+      } else if (c === ';') {
+        context.rules.push(context.text.trim());
+        context.text = '';
+      } else if (c === '}') {
+        // forgotten semi-column
+        if (context.text.trim()) {
+          context.rules.push(context.text.trim());
+        }
+        if (context.rules.length) {
+          this.addRule(media, context);
+        }
+        context = context.parent;
+        context.text = '';
+      } else {
+        context.text += c;
+      }
     }
 
-    rule = rule.replace(/\s*(\W)\s*/gm, '$1');
-    rule = rule.replace(/\}(\.|@)/g, '}\n$1'); /*?*/
+    if (context.rules.length) {
+      this.addRule(media, context);
+    }
+
+    rule = Object.getOwnPropertyNames(media)
+      .map(k => (k === '' ? media[k].join('\n') : `${k} {\n${media[k].join('\n')}\n}`))
+      .join('\n');
 
     this.insertRule(rule);
 
-    return className;
+    return result;
   };
 
   renderCss = () => {
